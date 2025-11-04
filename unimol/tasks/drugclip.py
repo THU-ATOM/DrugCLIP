@@ -619,11 +619,20 @@ class DrugCLIP(UnicoreTask):
     def test_pcba_target(self, name, model, **kwargs):
         """Encode a dataset with the molecule encoder."""
 
+        print(f"  开始处理 PCBA 目标: {name}", flush=True)
+        
         #names = "PPARG"
         data_path = "./data/lit_pcba/" + name + "/mols.lmdb"
+        print(f"  加载分子数据: {data_path}", flush=True)
+        
+        if not os.path.exists(data_path):
+            print(f"  警告: 数据文件不存在: {data_path}", flush=True)
+            return 0, 0, {}, {}
+        
         mol_dataset = self.load_mols_dataset(data_path, "atoms", "coordinates")
         num_data = len(mol_dataset)
         bsz=64
+        print(f"  分子数量: {num_data}, batch_size: {bsz}", flush=True)
         #print(num_data//bsz)
         mol_reps = []
         mol_names = []
@@ -631,8 +640,11 @@ class DrugCLIP(UnicoreTask):
         
         # generate mol data
         
+        print(f"  开始生成分子表示...", flush=True)
         mol_data = torch.utils.data.DataLoader(mol_dataset, batch_size=bsz, collate_fn=mol_dataset.collater)
-        for _, sample in enumerate(tqdm(mol_data)):
+        for batch_idx, sample in enumerate(tqdm(mol_data)):
+            if batch_idx % 10 == 0:
+                print(f"    处理批次 {batch_idx}", flush=True)
             sample = unicore.utils.move_to_cuda(sample)
             dist = sample["net_input"]["mol_src_distance"]
             et = sample["net_input"]["mol_src_edge_type"]
@@ -699,11 +711,23 @@ class DrugCLIP(UnicoreTask):
     
 
     def test_pcba(self, model, **kwargs):
+        print("="*80, flush=True)
+        print("进入 test_pcba 函数", flush=True)
+        print("="*80, flush=True)
+        
         #ckpt_date = self.args.finetune_from_model.split("/")[-2]
         #save_name = "/home/gaobowen/DrugClip/test_results/pcba/" + ckpt_date + ".txt"
         save_name = ""
         
-        targets = os.listdir("./data/lit_pcba/")
+        data_dir = "./data/lit_pcba/"
+        print(f"检查数据目录: {data_dir}", flush=True)
+        if not os.path.exists(data_dir):
+            print(f"警告: 数据目录不存在: {data_dir}", flush=True)
+            return
+        
+        targets = os.listdir(data_dir)
+        print(f"找到 {len(targets)} 个 PCBA 目标", flush=True)
+        print(f"目标列表: {targets[:5]}..." if len(targets) > 5 else f"目标列表: {targets}", flush=True)
 
         #print(targets)
         auc_list = []
@@ -722,7 +746,8 @@ class DrugCLIP(UnicoreTask):
             "0.02": [],
             "0.05": []
         }
-        for target in targets:
+        for i, target in enumerate(targets):
+            print(f"处理目标 [{i+1}/{len(targets)}]: {target}", flush=True)
             auc, bedroc, ef, re = self.test_pcba_target(target, model)
             auc_list.append(auc)
             bedroc_list.append(bedroc)
@@ -757,137 +782,214 @@ class DrugCLIP(UnicoreTask):
 
         return 
     
-    def test_dude_target(self, target, model, **kwargs):
-
-        data_path = "./data/DUD-E/raw/all/" + target + "/mols.lmdb"
-        mol_dataset = self.load_mols_dataset(data_path, "atoms", "coordinates")
-        num_data = len(mol_dataset)
-        bsz=64
-        print(num_data//bsz)
+    def forward_single_target(self, target_name, model, **kwargs):
+        """
+        通用的前向计算函数,不依赖于特定数据集
+        只根据input的数据进行计算并保存结果
+        
+        Args:
+            target_name: 目标名称
+            model: DrugCLIP模型
+        
+        Returns:
+            scores: 预测分数
+            labels: 标签(如果有的话)
+            mol_names: 分子名称
+        """
+        print(f"  开始处理目标: {target_name}", flush=True)
+        
+        # 1. 加载分子数据
+        mol_lmdb_path = f"/data/data/{target_name}/mols.lmdb"
+        print(f"  加载分子数据: {mol_lmdb_path}", flush=True)
+        
+        if not os.path.exists(mol_lmdb_path):
+            print(f"  错误: 分子数据不存在: {mol_lmdb_path}", flush=True)
+            raise FileNotFoundError(f"Molecule LMDB not found: {mol_lmdb_path}")
+        
+        mol_dataset = self.load_mols_dataset(mol_lmdb_path, "atoms", "coordinates")
+        num_mols = len(mol_dataset)
+        bsz = 64
+        print(f"  分子数量: {num_mols}, batch_size: {bsz}", flush=True)
+        
+        # 2. 编码分子
         mol_reps = []
         mol_names = []
         labels = []
         
-        # generate mol data
-        
+        print(f"  开始编码分子...", flush=True)
         mol_data = torch.utils.data.DataLoader(mol_dataset, batch_size=bsz, collate_fn=mol_dataset.collater)
-        for _, sample in enumerate(tqdm(mol_data)):
+        
+        for batch_idx, sample in enumerate(tqdm(mol_data, desc="Encoding molecules")):
+            if batch_idx % 10 == 0:
+                print(f"    处理分子批次 {batch_idx}/{len(mol_data)}", flush=True)
+            
             sample = unicore.utils.move_to_cuda(sample)
             dist = sample["net_input"]["mol_src_distance"]
             et = sample["net_input"]["mol_src_edge_type"]
             st = sample["net_input"]["mol_src_tokens"]
+            
             mol_padding_mask = st.eq(model.mol_model.padding_idx)
             mol_x = model.mol_model.embed_tokens(st)
             n_node = dist.size(-1)
+            
             gbf_feature = model.mol_model.gbf(dist, et)
             gbf_result = model.mol_model.gbf_proj(gbf_feature)
-            graph_attn_bias = gbf_result
-            graph_attn_bias = graph_attn_bias.permute(0, 3, 1, 2).contiguous()
+            graph_attn_bias = gbf_result.permute(0, 3, 1, 2).contiguous()
             graph_attn_bias = graph_attn_bias.view(-1, n_node, n_node)
+            
             mol_outputs = model.mol_model.encoder(
                 mol_x, padding_mask=mol_padding_mask, attn_mask=graph_attn_bias
             )
-            mol_encoder_rep = mol_outputs[0][:,0,:]
-            mol_emb = mol_encoder_rep
+            mol_encoder_rep = mol_outputs[0][:, 0, :]
             mol_emb = model.mol_project(mol_encoder_rep)
             mol_emb = mol_emb / mol_emb.norm(dim=-1, keepdim=True)
-            #print(mol_emb.dtype)
             mol_emb = mol_emb.detach().cpu().numpy()
-            #print(mol_emb.dtype)
+            
             mol_reps.append(mol_emb)
             mol_names.extend(sample["smi_name"])
-            labels.extend(sample["target"].detach().cpu().numpy())
+            
+            # 尝试获取标签(如果有的话)
+            if "target" in sample:
+                labels.extend(sample["target"].detach().cpu().numpy())
+        
         mol_reps = np.concatenate(mol_reps, axis=0)
-        labels = np.array(labels, dtype=np.int32)
-        # generate pocket data
-        data_path = "./data/DUD-E/raw/all/" + target + "/pocket.lmdb"
-        pocket_dataset = self.load_pockets_dataset(data_path)
+        labels = np.array(labels, dtype=np.int32) if labels else None
+        
+        # 3. 加载口袋数据
+        pocket_lmdb_path = f"/data/data/{target_name}/pocket.lmdb"
+        print(f"  加载口袋数据: {pocket_lmdb_path}", flush=True)
+        
+        if not os.path.exists(pocket_lmdb_path):
+            print(f"  错误: 口袋数据不存在: {pocket_lmdb_path}", flush=True)
+            raise FileNotFoundError(f"Pocket LMDB not found: {pocket_lmdb_path}")
+        
+        pocket_dataset = self.load_pockets_dataset(pocket_lmdb_path)
         pocket_data = torch.utils.data.DataLoader(pocket_dataset, batch_size=bsz, collate_fn=pocket_dataset.collater)
+        
+        # 4. 编码口袋
         pocket_reps = []
-
-        for _, sample in enumerate(tqdm(pocket_data)):
+        print(f"  开始编码口袋...", flush=True)
+        
+        for batch_idx, sample in enumerate(tqdm(pocket_data, desc="Encoding pockets")):
             sample = unicore.utils.move_to_cuda(sample)
             dist = sample["net_input"]["pocket_src_distance"]
             et = sample["net_input"]["pocket_src_edge_type"]
             st = sample["net_input"]["pocket_src_tokens"]
+            
             pocket_padding_mask = st.eq(model.pocket_model.padding_idx)
             pocket_x = model.pocket_model.embed_tokens(st)
             n_node = dist.size(-1)
+            
             gbf_feature = model.pocket_model.gbf(dist, et)
             gbf_result = model.pocket_model.gbf_proj(gbf_feature)
-            graph_attn_bias = gbf_result
-            graph_attn_bias = graph_attn_bias.permute(0, 3, 1, 2).contiguous()
+            graph_attn_bias = gbf_result.permute(0, 3, 1, 2).contiguous()
             graph_attn_bias = graph_attn_bias.view(-1, n_node, n_node)
+            
             pocket_outputs = model.pocket_model.encoder(
                 pocket_x, padding_mask=pocket_padding_mask, attn_mask=graph_attn_bias
             )
-            pocket_encoder_rep = pocket_outputs[0][:,0,:]
-            #pocket_emb = pocket_encoder_rep
+            pocket_encoder_rep = pocket_outputs[0][:, 0, :]
             pocket_emb = model.pocket_project(pocket_encoder_rep)
             pocket_emb = pocket_emb / pocket_emb.norm(dim=-1, keepdim=True)
             pocket_emb = pocket_emb.detach().cpu().numpy()
+            
             pocket_reps.append(pocket_emb)
+        
         pocket_reps = np.concatenate(pocket_reps, axis=0)
-        print(pocket_reps.shape)
-        res = pocket_reps @ mol_reps.T
-
-        res_single = res.max(axis=0)
-
-        auc, bedroc, ef_list, re_list = cal_metrics(labels, res_single, 80.5)
+        print(f"  口袋表示形状: {pocket_reps.shape}", flush=True)
         
+        # 5. 计算相似度分数
+        print(f"  计算分子-口袋相似度...", flush=True)
+        similarity_matrix = pocket_reps @ mol_reps.T
+        scores = similarity_matrix.max(axis=0)  # 对每个分子取最大相似度
         
-        print(target)
-
-        print(np.sum(labels), len(labels)-np.sum(labels))
+        # 6. 保存结果
+        result_data = {
+            'target': target_name,
+            'scores': scores.tolist(),
+            'mol_names': mol_names
+        }
+        
+        # 如果有标签,也保存
+        if labels is not None:
+            result_data['labels'] = labels.tolist()
+            print(f"  标签统计 - 正样本: {np.sum(labels)}, 负样本: {len(labels)-np.sum(labels)}", flush=True)
+        
+        output_dir = "/data/output"
+        os.makedirs(output_dir, exist_ok=True)
+        
+        output_file = f"{output_dir}/{target_name}.json"
+        print(f"  保存预测结果到: {output_file}", flush=True)
+        
+        import json
+        with open(output_file, 'w') as f:
+            json.dump(result_data, f, indent=2)
+        
+        print(f"  目标 {target_name} 处理完成!", flush=True)
+        
+        return scores, labels, mol_names
+    
+    def test_dude_target(self, target, model, **kwargs):
+        """保留用于向后兼容,内部调用通用函数"""
+        return self.forward_single_target(target, model, **kwargs)
 
         return auc, bedroc, ef_list, re_list, res_single, labels
 
+    def forward_inference(self, model, **kwargs):
+        """
+        通用的推理函数,不依赖于特定数据集
+        自动检测 /data/data/ 目录下的所有目标并进行推理
+        
+        Args:
+            model: DrugCLIP模型
+        """
+        print("="*80, flush=True)
+        print("开始 DrugCLIP 推理", flush=True)
+        print("="*80, flush=True)
+
+        data_dir = "/data/data/"
+        print(f"检查数据目录: {data_dir}", flush=True)
+        
+        if not os.path.exists(data_dir):
+            print(f"错误: 数据目录不存在: {data_dir}", flush=True)
+            raise FileNotFoundError(f"Data directory not found: {data_dir}")
+        
+        # 获取所有目标
+        targets = [d for d in os.listdir(data_dir) if os.path.isdir(os.path.join(data_dir, d))]
+        
+        if not targets:
+            print(f"错误: 在 {data_dir} 下没有找到任何目标目录", flush=True)
+            raise ValueError(f"No target directories found in {data_dir}")
+        
+        print(f"找到 {len(targets)} 个目标", flush=True)
+        print(f"目标列表: {targets}", flush=True)
+        
+        # 处理每个目标
+        for i, target in enumerate(targets):
+            print(f"\n{'='*60}", flush=True)
+            print(f"处理目标 [{i+1}/{len(targets)}]: {target}", flush=True)
+            print(f"{'='*60}", flush=True)
+            
+            try:
+                scores, labels, mol_names = self.forward_single_target(target, model)
+                print(f"✓ 目标 {target} 处理成功", flush=True)
+                print(f"  - 分子数量: {len(mol_names)}", flush=True)
+                print(f"  - 分数范围: [{scores.min():.4f}, {scores.max():.4f}]", flush=True)
+                if labels is not None:
+                    print(f"  - 标签信息: 正样本={np.sum(labels)}, 负样本={len(labels)-np.sum(labels)}", flush=True)
+            except Exception as e:
+                print(f"✗ 目标 {target} 处理失败: {e}", flush=True)
+                import traceback
+                traceback.print_exc()
+                continue
+        
+        print("\n" + "="*80, flush=True)
+        print("所有目标处理完成！", flush=True)
+        print("="*80, flush=True)
+    
     def test_dude(self, model, **kwargs):
-
-
-        targets = os.listdir("./data/DUD-E/raw/all/")
-        auc_list = []
-        bedroc_list = []
-        ef_list = []
-        res_list= []
-        labels_list = []
-        re_list = {
-            "0.005": [],
-            "0.01": [],
-            "0.02": [],
-            "0.05": [],
-        }
-        ef_list = {
-            "0.005": [],
-            "0.01": [],
-            "0.02": [],
-            "0.05": [],
-        }
-        for i,target in enumerate(targets):
-            auc, bedroc, ef, re, res_single, labels = self.test_dude_target(target, model)
-            auc_list.append(auc)
-            bedroc_list.append(bedroc)
-            for key in ef:
-                ef_list[key].append(ef[key])
-            for key in re_list:
-                re_list[key].append(re[key])
-            res_list.append(res_single)
-            labels_list.append(labels)
-        res = np.concatenate(res_list, axis=0)
-        labels = np.concatenate(labels_list, axis=0)
-        print("auc mean", np.mean(auc_list))
-        print("bedroc mean", np.mean(bedroc_list))
-
-        for key in ef_list:
-            print("ef", key, "mean", np.mean(ef_list[key]))
-
-        for key in re_list:
-            print("re", key, "mean",  np.mean(re_list[key]))
-
-        # save printed results 
-        
-        
-        return
+        """保留用于向后兼容,内部调用通用推理函数"""
+        return self.forward_inference(model, **kwargs)
     
     
     
