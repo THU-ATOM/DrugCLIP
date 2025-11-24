@@ -7,7 +7,7 @@ import io
 import logging
 import pickle
 from pathlib import Path
-
+import re
 import lmdb
 import numpy as np
 from rdkit import Chem
@@ -358,7 +358,11 @@ class DrugCLIPReranker(RerankMethod):
             print(f"pocket_pdb: {pocket_pdb}")
 
 
-            pocket_pdb= "/data"
+            pattern = re.compile(r".*/drugclip")
+            match = pattern.match(pocket_pdb)
+            if match:
+                # 替换前缀为 /data
+                pocket_pdb = pocket_pdb.replace(match.group(), "/data")  
 
             print(f"docker-corrected pocket_pdb: {pocket_pdb}")
           
