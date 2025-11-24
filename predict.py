@@ -434,11 +434,11 @@ def main():
         
         try:
             # 设置环境变量传递参数给 test.sh
-            print(6666, args.output, flush=True)
             env = os.environ.copy()
             env['RESULTS_PATH'] = str(args.output)
             env['BATCH_SIZE'] = str(args.batch_size)
             env['WEIGHT_PATH'] = str(args.checkpoint)+"/checkpoint_best.pt"
+            env['INPUT_JSON'] = str(args.input)  # Pass input.json path to test.sh
             # 移除 TASK 环境变量,现在使用通用推理
             # env['TASK'] = str(args.test_task)
             env['CUDA_VISIBLE_DEVICES'] = str(args.gpu_id)
