@@ -15,12 +15,6 @@ from rdkit.Chem import AllChem, SaltRemover
 from rdkit.Chem.MolStandardize import rdMolStandardize
 
 from biotool import extract_pocket, pdbstr2struct
-from docker_ import (
-    #encode_mols,
-    #encode_pocket,
-    load_mol_embedding,
-    load_pocket_embedding,
-)
 from tqdm import tqdm
 
 from abc import ABC, abstractmethod
@@ -31,8 +25,24 @@ import numpy as np
 
 import subprocess
 import os
+import pickle as pkl
+
+DEFAULT_EMBED_DIM = 128 * 6
+
+def load_pocket_embedding(workdir: str):
+    """Load pocket embeddings from DrugCLIP."""
+    path = Path(workdir) / "pocket_reps_project.pkl"
+    with open(path, "rb") as f:
+        _, pocket_embedding = pkl.load(f)
+    pocket_embedding = pocket_embedding.reshape(-1, DEFAULT_EMBED_DIM)
+    return pocket_embedding
 
 
+def load_mol_embedding(workdir: str):
+    """Load molecule embeddings from DrugCLIP."""
+    path = Path(workdir) / "mol_embs.npy"
+    mol_embedding = np.load(path).reshape(-1, DEFAULT_EMBED_DIM)
+    return mol_embedding
 
 def encode_pocket(workdir: str, checkpoint_dir: str, gpu_id: int = 0):
     """
