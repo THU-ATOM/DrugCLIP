@@ -301,6 +301,13 @@ def deal_input_data(inputs, dataset_name):
         }
         
         pocket_lmdb_path = os.path.join(target_output_dir, 'pocket.lmdb')
+        if os.path.exists(pocket_lmdb_path):
+            import shutil
+            if os.path.isdir(pocket_lmdb_path):
+                shutil.rmtree(pocket_lmdb_path)
+            else:
+                os.remove(pocket_lmdb_path)
+            print(f"  - 已删除现有的 LMDB 数据库: {pocket_lmdb_path}", flush=True)
         write_lmdb([pocket_data], pocket_lmdb_path)
         
         # 3. 处理分子数据
@@ -368,8 +375,16 @@ def deal_input_data(inputs, dataset_name):
                 })
         
         # 4. 写入分子 LMDB
+
         if mol_data:
             mols_lmdb_path = os.path.join(target_output_dir, 'mols.lmdb')
+            if os.path.exists(mols_lmdb_path):
+                import shutil
+                if os.path.isdir(mols_lmdb_path):
+                    shutil.rmtree(mols_lmdb_path)
+                else:
+                    os.remove(mols_lmdb_path)
+                print(f"  - 已删除现有的 LMDB 数据库: {mols_lmdb_path}", flush=True)
             write_lmdb(mol_data, mols_lmdb_path)
             print(f"\n目标 {target_name} 处理完成!", flush=True)
             print(f"  - 口袋文件: {pocket_lmdb_path}", flush=True)
