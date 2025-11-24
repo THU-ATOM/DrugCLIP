@@ -33,6 +33,7 @@ import subprocess
 import os
 
 
+
 def encode_pocket(workdir: str, checkpoint_dir: str, gpu_id: int = 0):
     """
     调用 encode_pocket.sh 生成 pocket embedding
