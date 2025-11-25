@@ -1338,7 +1338,7 @@ class DrugCLIP(UnicoreTask):
 
             mol_data_path = mol_path
 
-            mol_dataset = self.load_mols_dataset_dtwg(
+            mol_dataset = self.load_mols_dataset(
                 mol_data_path, "atoms", "coordinates"
             )
             bsz = 64
