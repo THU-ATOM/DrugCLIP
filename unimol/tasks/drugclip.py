@@ -400,6 +400,76 @@ class DrugCLIP(UnicoreTask):
         )
         return nest_dataset
     
+    def load_mols_dataset_dtwg(self, data_path, atoms, coords, **kwargs):
+        # atom_key = 'atoms'
+        # atom_key = 'atom_types'
+
+        """Load a given dataset split.
+
+        'smi','pocket','atoms','coordinates','pocket_atoms','pocket_coordinates','holo_coordinates','holo_pocket_coordinates','scaffold'
+        Args:
+            split (str): name of the data scoure (e.g., bppp)
+        """
+
+        dataset = LMDBDataset(data_path)
+
+        dataset = AffinityMolDataset(
+            dataset,
+            self.args.seed,
+            atoms,
+            coords,
+            False,
+        )
+
+        smi_dataset = KeyDataset(dataset, "smi")
+
+        def PrependAndAppend(dataset, pre_token, app_token):
+            dataset = PrependTokenDataset(dataset, pre_token)
+            return AppendTokenDataset(dataset, app_token)
+
+        dataset = RemoveHydrogenDataset(
+            dataset, "atoms", "coordinates", True, True
+        )
+
+        apo_dataset = NormalizeDataset(dataset, "coordinates")
+
+        src_dataset = KeyDataset(apo_dataset, "atoms")
+        len_dataset = LengthDataset(src_dataset)
+        src_dataset = TokenizeDataset(
+            src_dataset, self.dictionary, max_seq_len=self.args.max_seq_len
+        )
+        coord_dataset = KeyDataset(apo_dataset, "coordinates")
+        src_dataset = PrependAndAppend(
+            src_dataset, self.dictionary.bos(), self.dictionary.eos()
+        )
+        edge_type = EdgeTypeDataset(src_dataset, len(self.dictionary))
+        coord_dataset = FromNumpyDataset(coord_dataset)
+        distance_dataset = DistanceDataset(coord_dataset)
+        coord_dataset = PrependAndAppend(coord_dataset, 0.0, 0.0)
+        distance_dataset = PrependAndAppend2DDataset(distance_dataset, 0.0)
+
+        nest_dataset = NestedDictionaryDataset(
+            {
+                "net_input": {
+                    "mol_src_tokens": RightPadDataset(
+                        src_dataset,
+                        pad_idx=self.dictionary.pad(),
+                    ),
+                    "mol_src_distance": RightPadDataset2D(
+                        distance_dataset,
+                        pad_idx=0,
+                    ),
+                    "mol_src_edge_type": RightPadDataset2D(
+                        edge_type,
+                        pad_idx=0,
+                    ),
+                },
+                "smi_name": RawArrayDataset(smi_dataset),
+                # "target":  RawArrayDataset(label_dataset),
+                "mol_len": RawArrayDataset(len_dataset),
+            },
+        )
+        return nest_dataset
 
     def load_retrieval_mols_dataset(self, data_path,atoms,coords, **kwargs):
  
