@@ -378,7 +378,13 @@ class AffinityMolDataset(BaseWrapperDataset):
         #coordinates = self.dataset[index][self.coordinates][sample_idx]
         #coordinates = self.dataset[index][self.coordinates]
         
-        smi = self.dataset[index]["smi"]
+        #smi = self.dataset[index]["smi"]
+        if "smiles" in self.dataset[index]:
+            smi = self.dataset[index]["smiles"]
+        elif "smi" in self.dataset[index]:
+            smi = self.dataset[index]["smi"]
+        else:
+            smi = ""
         return {
             "atoms": atoms,
             "coordinates": coordinates.astype(np.float32),
