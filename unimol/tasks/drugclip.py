@@ -954,14 +954,24 @@ class DrugCLIP(UnicoreTask):
             print(f"错误: 数据目录不存在: {data_dir}", flush=True)
             raise FileNotFoundError(f"Data directory not found: {data_dir}")
         
-        # 获取所有目标
-        targets = [d for d in os.listdir(data_dir) if os.path.isdir(os.path.join(data_dir, d))]
+        # Check if INPUT_JSON environment variable is set
+        input_json_path = os.environ.get('INPUT_JSON')
+        if input_json_path and os.path.exists(input_json_path):
+            print(f"使用 INPUT_JSON 中指定的目标: {input_json_path}", flush=True)
+            import json
+            with open(input_json_path, 'r') as f:
+                input_data = json.load(f)
+            targets = [item['name'] for item in input_data]
+            print(f"从 INPUT_JSON 读取到 {len(targets)} 个目标", flush=True)
+        else:
+            # 获取所有目标(原有逻辑)
+            targets = [d for d in os.listdir(data_dir) if os.path.isdir(os.path.join(data_dir, d))]
+            print(f"扫描目录找到 {len(targets)} 个目标", flush=True)
         
         if not targets:
-            print(f"错误: 在 {data_dir} 下没有找到任何目标目录", flush=True)
-            raise ValueError(f"No target directories found in {data_dir}")
+            print(f"错误: 没有找到任何目标", flush=True)
+            raise ValueError(f"No targets found")
         
-        print(f"找到 {len(targets)} 个目标", flush=True)
         print(f"目标列表: {targets}", flush=True)
         
         # 处理每个目标
