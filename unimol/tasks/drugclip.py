@@ -1099,6 +1099,116 @@ class DrugCLIP(UnicoreTask):
         
         return [mol_names[i] for i in top_k], res[top_k]
 
+    def encode_pockets_multi_folds(
+        self, model, pocket_dir, pocket_path, **kwargs
+    ):
+        # 6 folds
+        # ckpts = [
+        #     "/checkpoints/2023-12-06_20-39-17/checkpoint_best.pt",
+        #     "/checkpoints/2023-12-06_23-23-23/checkpoint_best.pt",
+        #     "/checkpoints/2023-12-07_10-25-59/checkpoint_best.pt",
+        #     "/checkpoints/2023-12-07_14-46-18/checkpoint_best.pt",
+        #     "/checkpoints/2023-12-07_22-30-21/checkpoint_best.pt",
+        #     "/checkpoints/2023-12-08_11-21-09/checkpoint_best.pt",
+        # ]
+
+        ckpts = [
+            "/checkpoints/2023-12-06_20-39-17/checkpoint_best.pt",
+            "/checkpoints/2023-12-06_20-39-17/checkpoint_best.pt",
+            "/checkpoints/2023-12-06_20-39-17/checkpoint_best.pt",
+            "/checkpoints/2023-12-06_20-39-17/checkpoint_best.pt",
+            "/checkpoints/2023-12-06_20-39-17/checkpoint_best.pt",
+            "/checkpoints/2023-12-06_20-39-17/checkpoint_best.pt",
+        ]
+        # ckpts = ckpts[:1]
+
+        pocket_reps_all = []
+        pocket_names_all = []
+
+        for fold, ckpt in enumerate(ckpts):
+
+            logger.info(f"load checkpoint {ckpt}")
+            assert os.path.exists(ckpt), f"checkpoint {ckpt} not found"
+            state = checkpoint_utils.load_checkpoint_to_cpu(ckpt)
+            model.load_state_dict(state["model"], strict=False)
+
+            # generate pocket data
+            pocket_dataset = self.load_pockets_dataset(pocket_path)
+            pocket_data = torch.utils.data.DataLoader(
+                pocket_dataset,
+                batch_size=16,
+                collate_fn=pocket_dataset.collater,
+            )
+            pocket_reps = []
+            pocket_names = []
+            for _, sample in enumerate(tqdm(pocket_data)):
+
+                sample = unicore.utils.move_to_cuda(sample)
+                dist = sample["net_input"]["pocket_src_distance"]
+                et = sample["net_input"]["pocket_src_edge_type"]
+                st = sample["net_input"]["pocket_src_tokens"]
+                # print(st)
+                pocket_padding_mask = st.eq(model.pocket_model.padding_idx)
+                pocket_x = model.pocket_model.embed_tokens(st)
+                n_node = dist.size(-1)
+                gbf_feature = model.pocket_model.gbf(dist, et)
+                gbf_result = model.pocket_model.gbf_proj(gbf_feature)
+                graph_attn_bias = gbf_result
+                graph_attn_bias = graph_attn_bias.permute(
+                    0, 3, 1, 2
+                ).contiguous()
+                graph_attn_bias = graph_attn_bias.view(-1, n_node, n_node)
+                pocket_outputs = model.pocket_model.encoder(
+                    pocket_x,
+                    padding_mask=pocket_padding_mask,
+                    attn_mask=graph_attn_bias,
+                )
+                pocket_encoder_rep = pocket_outputs[0][:, 0, :]
+                pocket_emb = model.pocket_project(pocket_encoder_rep)
+                pocket_emb = pocket_emb / pocket_emb.norm(dim=-1, keepdim=True)
+                pocket_emb = pocket_emb.detach().cpu().numpy()
+                pocket_name = sample["pocket_name"]
+                pocket_names.extend(pocket_name)
+                pocket_reps.append(pocket_emb)
+                # # find all index that st is > 3
+                # #index = st > 3
+
+                # #index = index.squeeze(0)
+
+                # #print(index.shape)
+
+                # # index is the second
+
+                # cur_pocket_reps = pocket_outputs[0]
+
+                # cur_pocket_reps = model.pocket_project(cur_pocket_reps)
+
+                # #cur_pocket_reps = cur_pocket_reps[:, index, :]
+
+                # pocket_reps.append(cur_pocket_reps.detach().cpu().numpy())
+
+            pocket_reps = np.concatenate(pocket_reps, axis=0)
+            pocket_reps = pocket_reps.astype(np.float32)
+            pocket_reps_all.append(pocket_reps)
+
+        pocket_reps_all = np.array(pocket_reps_all)
+
+        # pocket_reps_all = np.concatenate(pocket_reps_all, axis=0)
+        # print(pocket_reps_all.shape)
+
+        # change the first and second dimension
+
+        pocket_reps_all = pocket_reps_all.transpose(1, 0, 2)
+
+        # merge the second and third dimension
+
+        # print(pocket_reps_all.shape)
+
+        # print(pocket_reps_all.shape)
+
+        # save the reps and names
+
+        return pocket_reps_all, pocket_names
 
         
 
