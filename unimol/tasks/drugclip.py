@@ -1211,7 +1211,129 @@ class DrugCLIP(UnicoreTask):
         return pocket_reps_all, pocket_names
 
         
+    def encode_mols_multi_folds(self, model, mol_path, save_dir, **kwargs):
+        logger.info(f"encoding mols from {mol_path}")
 
+        # 6 folds
+        # ckpts = [
+        #     "/checkpoints/2023-12-06_20-39-17/checkpoint_best.pt",
+        #     "/checkpoints/2023-12-06_23-23-23/checkpoint_best.pt",
+        #     "/checkpoints/2023-12-07_10-25-59/checkpoint_best.pt",
+        #     "/checkpoints/2023-12-07_14-46-18/checkpoint_best.pt",
+        #     "/checkpoints/2023-12-07_22-30-21/checkpoint_best.pt",
+        #     "/checkpoints/2023-12-08_11-21-09/checkpoint_best.pt",
+        # ]
+        ckpts = [
+            "/checkpoints/2023-12-06_20-39-17/checkpoint_best.pt",
+            "/checkpoints/2023-12-06_20-39-17/checkpoint_best.pt",
+            "/checkpoints/2023-12-06_20-39-17/checkpoint_best.pt",
+            "/checkpoints/2023-12-06_20-39-17/checkpoint_best.pt",
+            "/checkpoints/2023-12-06_20-39-17/checkpoint_best.pt",
+            "/checkpoints/2023-12-06_20-39-17/checkpoint_best.pt",
+        ]
+
+        # ckpts = ckpts[:1]
+
+        prefix = "/drug/DrugCLIP_chemdata_v2024/embs/"
+
+        prefix = save_dir
+
+        # os.makedirs(prefix, exist_ok=True)
+
+        caches = [
+            "fold0.pkl",
+            "fold1.pkl",
+            "fold2.pkl",
+            "fold3.pkl",
+            "fold4.pkl",
+            "fold5.pkl",
+        ]
+        caches = [prefix + cache for cache in caches]
+
+        mol_reps_all = []
+
+        for (fold, ckpt), cache in zip(enumerate(ckpts), caches):
+            if os.path.exists(cache):
+                with open(cache, "rb") as f:
+                    mol_reps, mol_names = pickle.load(f)
+                mol_reps_all.append(mol_reps)
+                continue
+
+            assert os.path.exists(ckpt), f"checkpoint {ckpt} not found"
+            print(f"loading checkpoint {ckpt}")
+            state = checkpoint_utils.load_checkpoint_to_cpu(ckpt)
+            model.load_state_dict(state["model"], strict=False)
+
+            # mol_data_path = "/drug/DrugCLIP_chemdata_v2024/DrugCLIP_mols_v2024.lmdb"
+
+            mol_data_path = mol_path
+
+            mol_dataset = self.load_mols_dataset_dtwg(
+                mol_data_path, "atoms", "coordinates"
+            )
+            bsz = 64
+            mol_reps = []
+            mol_names = []
+            mol_ids_subsets = []
+
+            # generate mol data
+
+            mol_data = torch.utils.data.DataLoader(
+                mol_dataset, batch_size=bsz, collate_fn=mol_dataset.collater
+            )
+            for _, sample in enumerate(tqdm(mol_data)):
+
+                sample = unicore.utils.move_to_cuda(sample)
+                dist = sample["net_input"]["mol_src_distance"]
+                et = sample["net_input"]["mol_src_edge_type"]
+                st = sample["net_input"]["mol_src_tokens"]
+                mol_padding_mask = st.eq(model.mol_model.padding_idx)
+                mol_x = model.mol_model.embed_tokens(st)
+                n_node = dist.size(-1)
+                gbf_feature = model.mol_model.gbf(dist, et)
+                gbf_result = model.mol_model.gbf_proj(gbf_feature)
+                graph_attn_bias = gbf_result
+                graph_attn_bias = graph_attn_bias.permute(
+                    0, 3, 1, 2
+                ).contiguous()
+                graph_attn_bias = graph_attn_bias.view(-1, n_node, n_node)
+                mol_outputs = model.mol_model.encoder(
+                    mol_x,
+                    padding_mask=mol_padding_mask,
+                    attn_mask=graph_attn_bias,
+                )
+                mol_encoder_rep = mol_outputs[0][:, 0, :]
+                mol_emb = model.mol_project(mol_encoder_rep)
+                mol_emb = mol_emb / mol_emb.norm(dim=-1, keepdim=True)
+                mol_emb = mol_emb.detach().cpu().numpy()
+                mol_reps.append(mol_emb)
+                # #index = st.squeeze(0) > 3
+                # cur_mol_reps = mol_outputs[0]
+                # cur_mol_reps = model.mol_project(cur_mol_reps)
+                # #cur_mol_reps = cur_mol_reps[:, index, :]
+                # mol_reps.append(cur_mol_reps.detach().cpu().numpy())
+                mol_names.extend(sample["smi_name"])
+
+                # ids = sample["id"]
+                # subsets = sample["subset"]
+                # ids_subsets = [ids[i] + ";" + subsets[i] for i in range(len(ids))]
+                # mol_ids_subsets.extend(ids_subsets)
+            mol_reps = np.concatenate(mol_reps, axis=0)
+            mol_reps_all.append(mol_reps)
+            with open(cache, "wb") as f:
+                pickle.dump([mol_reps, mol_names], f)
+
+        mol_reps_all = np.array(mol_reps_all)
+
+        mol_reps_all = mol_reps_all.transpose(1, 0, 2)
+
+        # convert to float 32
+        mol_reps_all = mol_reps_all.astype(np.float32)
+
+        # save the reps to npy file
+        print(mol_reps_all.shape)
+        os.makedirs(save_dir, exist_ok=True)
+        np.save(os.path.join(save_dir, "mol_embs.npy"), mol_reps_all)
         
          
 
