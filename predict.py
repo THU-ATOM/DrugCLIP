@@ -278,27 +278,43 @@ def deal_input_data(inputs, dataset_name):
         print(f"输出目录: {target_output_dir}", flush=True)
         print(f"  (LMDB 文件将保存在此目录)", flush=True)
         
-        # 1. 读取蛋白和配体
-        if not receptor_pdb or not crystal_ligand:
+        # 1. 读取 pocket 文件（优先使用已处理好的 pocket.pdb）
+        if pocket_pdb and os.path.exists(pocket_pdb):
+            print(f"\n使用预处理的 pocket 文件...", flush=True)
+            print(f"读取 PDB: {pocket_pdb}", flush=True)
+            pocket = read_pdb(pocket_pdb)
+            
+            # 直接使用 pocket 文件的所有原子
+            pocket_data = {
+                'pocket': target_name,
+                'pocket_index': 0,
+                'pocket_atoms': pocket['atom_type'],
+                'pocket_coordinates': pocket['coord']
+            }
+            print(f"  - Pocket 包含 {len(pocket['atom_type'])} 个原子", flush=True)
+            
+        elif receptor_pdb and crystal_ligand:
+            # 如果没有 pocket 文件，则从 receptor 生成
+            print(f"\n从 receptor 生成口袋数据...", flush=True)
+            print(f"读取 PDB: {receptor_pdb}", flush=True)
+            protein = read_pdb(receptor_pdb)
+            ligand = read_mol2_ligand(crystal_ligand)
+            
+            pocket_residues = get_pocket_residues(protein, ligand, radius=6)
+            pocket_atom_idx = [i for i, r in enumerate(protein['residue_name']) if r in pocket_residues]
+            pocket_atom_type = [protein['atom_type'][i] for i in pocket_atom_idx]
+            pocket_coord = [protein['coord'][i] for i in pocket_atom_idx]
+            
+            pocket_data = {
+                'pocket': target_name,
+                'pocket_index': 0,
+                'pocket_atoms': pocket_atom_type,
+                'pocket_coordinates': pocket_coord
+            }
+            print(f"  - Pocket 包含 {len(pocket_atom_type)} 个原子", flush=True)
+        else:
             print(f"警告: 缺少必要文件，跳过 {target_name}", flush=True)
             continue
-            
-        protein = read_pdb(receptor_pdb)
-        ligand = read_mol2_ligand(crystal_ligand)
-        
-        # 2. 生成口袋数据
-        print(f"\n生成口袋数据...", flush=True)
-        pocket_residues = get_pocket_residues(protein, ligand, radius=6)
-        pocket_atom_idx = [i for i, r in enumerate(protein['residue_name']) if r in pocket_residues]
-        pocket_atom_type = [protein['atom_type'][i] for i in pocket_atom_idx]
-        pocket_coord = [protein['coord'][i] for i in pocket_atom_idx]
-        
-        pocket_data = {
-            'pocket': target_name,
-            'pocket_index': 0,
-            'pocket_atoms': pocket_atom_type,
-            'pocket_coordinates': pocket_coord
-        }
         
         pocket_lmdb_path = os.path.join(target_output_dir, 'pocket.lmdb')
         if os.path.exists(pocket_lmdb_path):
