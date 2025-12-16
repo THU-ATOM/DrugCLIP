@@ -270,10 +270,15 @@ def deal_input_data(inputs, dataset_name):
         actives_sdf = item.get('actives_path')
         decoys_sdf = item.get('decoys_path')
         
-        # 输出目录 - 与输入文件在同一目录
-        # 输入文件路径格式: /data/data/{target_name}/xxx.pdb
-        # LMDB 也保存到: /data/data/{target_name}/
-        target_output_dir = f"/data/data/{target_name}"
+        # 输出目录 - 从输入文件路径中提取目录
+        # 优先使用 pocket_pdb，其次是 receptor_pdb，最后是 actives_sdf
+        base_file = pocket_pdb or receptor_pdb or actives_sdf or decoys_sdf
+        if base_file:
+            target_output_dir = str(Path(base_file).parent)
+        else:
+            # 如果所有路径都不存在，使用 fallback 目录
+            target_output_dir = f"/data/data/{target_name}"
+        
         os.makedirs(target_output_dir, exist_ok=True)
         print(f"输出目录: {target_output_dir}", flush=True)
         print(f"  (LMDB 文件将保存在此目录)", flush=True)
