@@ -852,7 +852,7 @@ class DrugCLIP(UnicoreTask):
 
         return 
     
-    def forward_single_target(self, target_name, model, **kwargs):
+    def forward_single_target(self, target_name, model, data_dir=None, **kwargs):
         """
         通用的前向计算函数,不依赖于特定数据集
         只根据input的数据进行计算并保存结果
@@ -860,6 +860,7 @@ class DrugCLIP(UnicoreTask):
         Args:
             target_name: 目标名称
             model: DrugCLIP模型
+            data_dir: 数据目录路径（如果为None，则使用默认路径）
         
         Returns:
             scores: 预测分数
@@ -868,8 +869,12 @@ class DrugCLIP(UnicoreTask):
         """
         print(f"  开始处理目标: {target_name}", flush=True)
         
+        # 使用传入的数据目录或默认路径
+        if data_dir is None:
+            data_dir = f"/data/data/{target_name}"
+        
         # 1. 加载分子数据
-        mol_lmdb_path = f"/data/data/{target_name}/mols.lmdb"
+        mol_lmdb_path = f"{data_dir}/mols.lmdb"
         print(f"  加载分子数据: {mol_lmdb_path}", flush=True)
         
         if not os.path.exists(mol_lmdb_path):
@@ -926,7 +931,7 @@ class DrugCLIP(UnicoreTask):
         labels = np.array(labels, dtype=np.int32) if labels else None
         
         # 3. 加载口袋数据
-        pocket_lmdb_path = f"/data/data/{target_name}/pocket.lmdb"
+        pocket_lmdb_path = f"{data_dir}/pocket.lmdb"
         print(f"  加载口袋数据: {pocket_lmdb_path}", flush=True)
         
         if not os.path.exists(pocket_lmdb_path):
@@ -985,7 +990,8 @@ class DrugCLIP(UnicoreTask):
             result_data['labels'] = labels.tolist()
             print(f"  标签统计 - 正样本: {np.sum(labels)}, 负样本: {len(labels)-np.sum(labels)}", flush=True)
         
-        output_dir = "/data/output"
+        # 使用 RESULTS_PATH 环境变量，如果没有则使用数据目录
+        output_dir = os.environ.get('RESULTS_PATH', data_dir)
         os.makedirs(output_dir, exist_ok=True)
         
         output_file = f"{output_dir}/{target_name}.json"
@@ -1008,7 +1014,7 @@ class DrugCLIP(UnicoreTask):
     def forward_inference(self, model, **kwargs):
         """
         通用的推理函数,不依赖于特定数据集
-        自动检测 /data/data/ 目录下的所有目标并进行推理
+        自动检测目标并进行推理
         
         Args:
             model: DrugCLIP模型
@@ -1017,25 +1023,40 @@ class DrugCLIP(UnicoreTask):
         print("开始 DrugCLIP 推理", flush=True)
         print("="*80, flush=True)
 
-        data_dir = "/data/data/"
-        print(f"检查数据目录: {data_dir}", flush=True)
-        
-        if not os.path.exists(data_dir):
-            print(f"错误: 数据目录不存在: {data_dir}", flush=True)
-            raise FileNotFoundError(f"Data directory not found: {data_dir}")
-        
         # Check if INPUT_JSON environment variable is set
         input_json_path = os.environ.get('INPUT_JSON')
+        target_data_dirs = {}  # 存储每个目标的数据目录
+        
         if input_json_path and os.path.exists(input_json_path):
             print(f"使用 INPUT_JSON 中指定的目标: {input_json_path}", flush=True)
             import json
             with open(input_json_path, 'r') as f:
                 input_data = json.load(f)
-            targets = [item['name'] for item in input_data]
+            targets = []
+            for item in input_data:
+                target_name = item['name']
+                targets.append(target_name)
+                # 从输入路径推断数据目录
+                # 优先使用 pocket_path，其次是 receptor_path，最后是 actives_path
+                base_file = item.get('pocket_path') or item.get('receptor_path') or item.get('actives_path') or item.get('decoys_path')
+                if base_file:
+                    from pathlib import Path
+                    target_data_dirs[target_name] = str(Path(base_file).parent)
+                else:
+                    target_data_dirs[target_name] = f"/data/data/{target_name}"
             print(f"从 INPUT_JSON 读取到 {len(targets)} 个目标", flush=True)
         else:
             # 获取所有目标(原有逻辑)
+            data_dir = "/data/data/"
+            print(f"检查数据目录: {data_dir}", flush=True)
+            
+            if not os.path.exists(data_dir):
+                print(f"错误: 数据目录不存在: {data_dir}", flush=True)
+                raise FileNotFoundError(f"Data directory not found: {data_dir}")
+                
             targets = [d for d in os.listdir(data_dir) if os.path.isdir(os.path.join(data_dir, d))]
+            for t in targets:
+                target_data_dirs[t] = os.path.join(data_dir, t)
             print(f"扫描目录找到 {len(targets)} 个目标", flush=True)
         
         if not targets:
@@ -1043,6 +1064,8 @@ class DrugCLIP(UnicoreTask):
             raise ValueError(f"No targets found")
         
         print(f"目标列表: {targets}", flush=True)
+        for t in targets:
+            print(f"  - {t}: {target_data_dirs.get(t, 'unknown')}", flush=True)
         
         # 处理每个目标
         for i, target in enumerate(targets):
@@ -1051,7 +1074,8 @@ class DrugCLIP(UnicoreTask):
             print(f"{'='*60}", flush=True)
             
             try:
-                scores, labels, mol_names = self.forward_single_target(target, model)
+                data_dir = target_data_dirs.get(target)
+                scores, labels, mol_names = self.forward_single_target(target, model, data_dir=data_dir)
                 print(f"✓ 目标 {target} 处理成功", flush=True)
                 print(f"  - 分子数量: {len(mol_names)}", flush=True)
                 print(f"  - 分数范围: [{scores.min():.4f}, {scores.max():.4f}]", flush=True)

@@ -101,13 +101,30 @@ def gen_conformation(mol, num_conf=20, num_worker=8):
 
 
 def convert_mol_to_data(mol, num_conf=1, num_worker=5):
-    """将分子转换为数据格式"""
-    mol = gen_conformation(mol, num_conf, num_worker)
-    if mol is None:
-        return None
-    coords = [np.array(mol.GetConformer(i).GetPositions()) for i in range(mol.GetNumConformers())]
-    atom_types = [a.GetSymbol() for a in mol.GetAtoms()]
-    return {'coords': coords, 'atom_types': atom_types, 'smi': Chem.MolToSmiles(mol), 'mol': mol}
+    """将分子转换为数据格式，优先生成新构象，失败则使用原始构象"""
+    original_mol = Chem.Mol(mol)  # 保存原始分子的副本
+    
+    # 首先尝试生成新构象
+    new_mol = gen_conformation(mol, num_conf, num_worker)
+    
+    if new_mol is not None:
+        # 成功生成新构象
+        coords = [np.array(new_mol.GetConformer(i).GetPositions()) for i in range(new_mol.GetNumConformers())]
+        atom_types = [a.GetSymbol() for a in new_mol.GetAtoms()]
+        return {'coords': coords, 'atom_types': atom_types, 'smi': Chem.MolToSmiles(new_mol), 'mol': new_mol}
+    
+    # 如果生成失败，尝试使用原始构象
+    if original_mol.GetNumConformers() > 0:
+        print(f"  使用原始构象作为 fallback: {Chem.MolToSmiles(original_mol)}", flush=True)
+        try:
+            coords = [np.array(original_mol.GetConformer(i).GetPositions()) for i in range(original_mol.GetNumConformers())]
+            atom_types = [a.GetSymbol() for a in original_mol.GetAtoms()]
+            return {'coords': coords, 'atom_types': atom_types, 'smi': Chem.MolToSmiles(original_mol), 'mol': original_mol}
+        except Exception as e:
+            print(f"  原始构象也无法使用: {e}", flush=True)
+            return None
+    
+    return None
 
 
 def convert_mol_to_data_keep_conformation(mol):
@@ -175,37 +192,79 @@ def read_mol2_ligand(path):
 def read_sdf(path):
     """读取 SDF 文件"""
     print(f"  读取 SDF: {path}", flush=True)
-    suppl = Chem.SDMolSupplier(path, removeHs=True, sanitize=True)
-    mols = [mol for mol in suppl if mol is not None]
+    suppl = Chem.SDMolSupplier(path, removeHs=False, sanitize=False)
+    mols = [add_charges(mol) for mol in suppl if mol is not None]
+    mols = [mol for mol in mols if mol is not None]
     print(f"    从 SDF 读取了 {len(mols)} 个分子", flush=True)
     return mols
 
 
 def add_charges(m):
     """添加电荷（修复化学问题）"""
-    m.UpdatePropertyCache(strict=False)
+    if m is None:
+        return None
+    
+    try:
+        m.UpdatePropertyCache(strict=False)
+    except:
+        return None
+    
     ps = Chem.DetectChemistryProblems(m)
     if not ps:
-        Chem.SanitizeMol(m)
-        return m
-    for p in ps:
-        if p.GetType()=='AtomValenceException':
-            at = m.GetAtomWithIdx(p.GetAtomIdx())
-            if at.GetAtomicNum()==7 and at.GetFormalCharge()==0 and at.GetExplicitValence()==4:
-                at.SetFormalCharge(1)
-            if at.GetAtomicNum()==6 and at.GetExplicitValence()==5:
-                for b in at.GetBonds():
-                    if b.GetBondType()==Chem.rdchem.BondType.DOUBLE:
-                        b.SetBondType(Chem.rdchem.BondType.SINGLE)
-                        break
-            if at.GetAtomicNum()==8 and at.GetFormalCharge()==0 and at.GetExplicitValence()==3:
-                at.SetFormalCharge(1)
-            if at.GetAtomicNum()==5 and at.GetFormalCharge()==0 and at.GetExplicitValence()==4:
-                at.SetFormalCharge(-1)
+        try:
+            Chem.SanitizeMol(m)
+            return m
+        except:
+            return None
+    
+    # 尝试多轮修复
+    for _ in range(3):
+        try:
+            m.UpdatePropertyCache(strict=False)
+        except:
+            return None
+        ps = Chem.DetectChemistryProblems(m)
+        if not ps:
+            break
+            
+        for p in ps:
+            if p.GetType()=='AtomValenceException':
+                at = m.GetAtomWithIdx(p.GetAtomIdx())
+                # 氮原子化合价 4 -> 设置正电荷
+                if at.GetAtomicNum()==7 and at.GetFormalCharge()==0 and at.GetExplicitValence()==4:
+                    at.SetFormalCharge(1)
+                # 碳原子化合价 5 或 6 -> 尝试将双键改为单键
+                if at.GetAtomicNum()==6 and at.GetExplicitValence() >= 5:
+                    bonds_modified = 0
+                    for b in at.GetBonds():
+                        if b.GetBondType()==Chem.rdchem.BondType.TRIPLE:
+                            b.SetBondType(Chem.rdchem.BondType.DOUBLE)
+                            bonds_modified += 1
+                            break
+                        elif b.GetBondType()==Chem.rdchem.BondType.DOUBLE:
+                            b.SetBondType(Chem.rdchem.BondType.SINGLE)
+                            bonds_modified += 1
+                            if at.GetExplicitValence() <= 4:
+                                break
+                # 氧原子化合价 3 -> 设置正电荷
+                if at.GetAtomicNum()==8 and at.GetFormalCharge()==0 and at.GetExplicitValence()==3:
+                    at.SetFormalCharge(1)
+                # 硼原子化合价 4 -> 设置负电荷
+                if at.GetAtomicNum()==5 and at.GetFormalCharge()==0 and at.GetExplicitValence()==4:
+                    at.SetFormalCharge(-1)
+    
     try:
         Chem.SanitizeMol(m)
     except:
-        return None
+        # 如果 sanitize 失败，尝试部分 sanitize
+        try:
+            Chem.SanitizeMol(m, sanitizeOps=Chem.SanitizeFlags.SANITIZE_FINDRADICALS |
+                                            Chem.SanitizeFlags.SANITIZE_SETAROMATICITY |
+                                            Chem.SanitizeFlags.SANITIZE_SETCONJUGATION |
+                                            Chem.SanitizeFlags.SANITIZE_SETHYBRIDIZATION |
+                                            Chem.SanitizeFlags.SANITIZE_SYMMRINGS)
+        except:
+            return None
     return m
 
 

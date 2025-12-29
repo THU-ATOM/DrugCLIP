@@ -13,8 +13,10 @@ RUN apt-get update && apt-get install -y \
 # ✅ 单独 COPY requirements.txt，提高缓存命中率
 COPY requirements.txt /tmp/requirements.txt
 
-# ✅ 先安装 Python 依赖（包含 torch）
-RUN pip3 install --no-cache-dir -r /tmp/requirements.txt
+# ✅ 先安装 Python 依赖（包含 torch），使用国内镜像加速
+RUN pip3 install --no-cache-dir -r /tmp/requirements.txt \
+    -i https://pypi.tuna.tsinghua.edu.cn/simple \
+    --timeout 300
 
 # 安装 Uni-Core（此时 torch 已经安装）
 RUN git clone https://github.com/dptech-corp/Uni-Core.git /tmp/Uni-core \
