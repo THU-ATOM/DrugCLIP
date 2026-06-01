@@ -1095,10 +1095,6 @@ class DrugCLIP(UnicoreTask):
         """保留用于向后兼容,内部调用通用推理函数"""
         return self.forward_inference(model, **kwargs)
     
-    
-    
-    
-    
     def encode_mols_once(self, model, data_path, emb_dir, atoms, coords, **kwargs):
         
         # cache path is embdir/data_path.pkl
@@ -1183,10 +1179,7 @@ class DrugCLIP(UnicoreTask):
         res = pocket_reps @ mol_reps.T
         res = res.max(axis=0)
 
-
         # get top k results
-
-        
         top_k = np.argsort(res)[::-1][:k]
 
         # return names and scores
@@ -1194,30 +1187,31 @@ class DrugCLIP(UnicoreTask):
         return [mol_names[i] for i in top_k], res[top_k]
 
     def encode_pockets_multi_folds(
-        self, model, pocket_dir, pocket_path, **kwargs
+        self, model, pocket_dir, pocket_path, weight_path, airdd_test, **kwargs
     ):
+        if not airdd_test:
         # 6 folds
-        # ckpts = [
-        #     "/checkpoints/2023-12-06_20-39-17/checkpoint_best.pt",
-        #     "/checkpoints/2023-12-06_23-23-23/checkpoint_best.pt",
-        #     "/checkpoints/2023-12-07_10-25-59/checkpoint_best.pt",
-        #     "/checkpoints/2023-12-07_14-46-18/checkpoint_best.pt",
-        #     "/checkpoints/2023-12-07_22-30-21/checkpoint_best.pt",
-        #     "/checkpoints/2023-12-08_11-21-09/checkpoint_best.pt",
-        # ]
-
-        ckpts = [
-            "/checkpoints/2023-12-06_20-39-17/checkpoint_best.pt",
-            "/checkpoints/2023-12-06_20-39-17/checkpoint_best.pt",
-            "/checkpoints/2023-12-06_20-39-17/checkpoint_best.pt",
-            "/checkpoints/2023-12-06_20-39-17/checkpoint_best.pt",
-            "/checkpoints/2023-12-06_20-39-17/checkpoint_best.pt",
-            "/checkpoints/2023-12-06_20-39-17/checkpoint_best.pt",
-        ]
-        # ckpts = ckpts[:1]
+            ckpts = [
+                "/checkpoints/2023-12-06_20-39-17/checkpoint_best.pt",
+                "/checkpoints/2023-12-06_23-23-23/checkpoint_best.pt",
+                "/checkpoints/2023-12-07_10-25-59/checkpoint_best.pt",
+                "/checkpoints/2023-12-07_14-46-18/checkpoint_best.pt",
+                "/checkpoints/2023-12-07_22-30-21/checkpoint_best.pt",
+                "/checkpoints/2023-12-08_11-21-09/checkpoint_best.pt",
+            ]
+        else:
+            ckpts = [weight_path]
 
         pocket_reps_all = []
         pocket_names_all = []
+
+        # generate pocket data
+        pocket_dataset = self.load_pockets_dataset(pocket_path)
+        pocket_data = torch.utils.data.DataLoader(
+            pocket_dataset,
+            batch_size=16,
+            collate_fn=pocket_dataset.collater,
+        )
 
         for fold, ckpt in enumerate(ckpts):
 
@@ -1226,17 +1220,9 @@ class DrugCLIP(UnicoreTask):
             state = checkpoint_utils.load_checkpoint_to_cpu(ckpt)
             model.load_state_dict(state["model"], strict=False)
 
-            # generate pocket data
-            pocket_dataset = self.load_pockets_dataset(pocket_path)
-            pocket_data = torch.utils.data.DataLoader(
-                pocket_dataset,
-                batch_size=16,
-                collate_fn=pocket_dataset.collater,
-            )
             pocket_reps = []
             pocket_names = []
             for _, sample in enumerate(tqdm(pocket_data)):
-
                 sample = unicore.utils.move_to_cuda(sample)
                 dist = sample["net_input"]["pocket_src_distance"]
                 et = sample["net_input"]["pocket_src_edge_type"]
@@ -1285,6 +1271,9 @@ class DrugCLIP(UnicoreTask):
             pocket_reps = pocket_reps.astype(np.float32)
             pocket_reps_all.append(pocket_reps)
 
+        if hasattr(pocket_dataset, "env") and pocket_dataset.env is not None:
+            pocket_dataset.env.close()
+
         pocket_reps_all = np.array(pocket_reps_all)
 
         # pocket_reps_all = np.concatenate(pocket_reps_all, axis=0)
@@ -1305,46 +1294,55 @@ class DrugCLIP(UnicoreTask):
         return pocket_reps_all, pocket_names
 
         
-    def encode_mols_multi_folds(self, model, mol_path, save_dir, **kwargs):
+    def encode_mols_multi_folds(self, model, mol_path, save_dir, weight_path, airdd_test, **kwargs):
         logger.info(f"encoding mols from {mol_path}")
 
-        # 6 folds
-        # ckpts = [
-        #     "/checkpoints/2023-12-06_20-39-17/checkpoint_best.pt",
-        #     "/checkpoints/2023-12-06_23-23-23/checkpoint_best.pt",
-        #     "/checkpoints/2023-12-07_10-25-59/checkpoint_best.pt",
-        #     "/checkpoints/2023-12-07_14-46-18/checkpoint_best.pt",
-        #     "/checkpoints/2023-12-07_22-30-21/checkpoint_best.pt",
-        #     "/checkpoints/2023-12-08_11-21-09/checkpoint_best.pt",
-        # ]
-        ckpts = [
-            "/checkpoints/2023-12-06_20-39-17/checkpoint_best.pt",
-            "/checkpoints/2023-12-06_20-39-17/checkpoint_best.pt",
-            "/checkpoints/2023-12-06_20-39-17/checkpoint_best.pt",
-            "/checkpoints/2023-12-06_20-39-17/checkpoint_best.pt",
-            "/checkpoints/2023-12-06_20-39-17/checkpoint_best.pt",
-            "/checkpoints/2023-12-06_20-39-17/checkpoint_best.pt",
-        ]
-
-        # ckpts = ckpts[:1]
-
-        prefix = "/drug/DrugCLIP_chemdata_v2024/embs/"
+        if not airdd_test:
+            # 6 folds
+            ckpts = [
+                "/checkpoints/2023-12-06_20-39-17/checkpoint_best.pt",
+                "/checkpoints/2023-12-06_23-23-23/checkpoint_best.pt",
+                "/checkpoints/2023-12-07_10-25-59/checkpoint_best.pt",
+                "/checkpoints/2023-12-07_14-46-18/checkpoint_best.pt",
+                "/checkpoints/2023-12-07_22-30-21/checkpoint_best.pt",
+                "/checkpoints/2023-12-08_11-21-09/checkpoint_best.pt",
+            ]
+            caches = [
+                "fold0.pkl",
+                "fold1.pkl",
+                "fold2.pkl",
+                "fold3.pkl",
+                "fold4.pkl",
+                "fold5.pkl",
+            ]
+        else:
+            ckpts = [
+                weight_path,
+            ]
+            caches = [
+                "fold0.pkl",
+            ]
 
         prefix = save_dir
 
-        # os.makedirs(prefix, exist_ok=True)
-
-        caches = [
-            "fold0.pkl",
-            "fold1.pkl",
-            "fold2.pkl",
-            "fold3.pkl",
-            "fold4.pkl",
-            "fold5.pkl",
-        ]
         caches = [prefix + cache for cache in caches]
 
         mol_reps_all = []
+
+        mol_data_path = mol_path
+        mol_dataset = self.load_mols_dataset_dtwg(
+            mol_data_path, "atoms", "coordinates"
+        )
+        bsz = 64
+        mol_reps = []
+        mol_names = []
+        mol_ids_subsets = []
+
+        # generate mol data
+
+        mol_data = torch.utils.data.DataLoader(
+            mol_dataset, batch_size=bsz, collate_fn=mol_dataset.collater
+        )
 
         for (fold, ckpt), cache in zip(enumerate(ckpts), caches):
             if os.path.exists(cache):
@@ -1358,23 +1356,6 @@ class DrugCLIP(UnicoreTask):
             state = checkpoint_utils.load_checkpoint_to_cpu(ckpt)
             model.load_state_dict(state["model"], strict=False)
 
-            # mol_data_path = "/drug/DrugCLIP_chemdata_v2024/DrugCLIP_mols_v2024.lmdb"
-
-            mol_data_path = mol_path
-
-            mol_dataset = self.load_mols_dataset_dtwg(
-                mol_data_path, "atoms", "coordinates"
-            )
-            bsz = 64
-            mol_reps = []
-            mol_names = []
-            mol_ids_subsets = []
-
-            # generate mol data
-
-            mol_data = torch.utils.data.DataLoader(
-                mol_dataset, batch_size=bsz, collate_fn=mol_dataset.collater
-            )
             for _, sample in enumerate(tqdm(mol_data)):
 
                 sample = unicore.utils.move_to_cuda(sample)
@@ -1417,6 +1398,9 @@ class DrugCLIP(UnicoreTask):
             with open(cache, "wb") as f:
                 pickle.dump([mol_reps, mol_names], f)
 
+        if hasattr(mol_dataset, "env") and mol_dataset.env is not None:
+            mol_dataset.env.close()        
+
         mol_reps_all = np.array(mol_reps_all)
 
         mol_reps_all = mol_reps_all.transpose(1, 0, 2)
@@ -1428,18 +1412,3 @@ class DrugCLIP(UnicoreTask):
         print(mol_reps_all.shape)
         os.makedirs(save_dir, exist_ok=True)
         np.save(os.path.join(save_dir, "mol_embs.npy"), mol_reps_all)
-        
-         
-
-
-    
-
-    
-
-        
-            
-         
-
-        
-    
-    

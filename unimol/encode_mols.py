@@ -52,23 +52,21 @@ def main(args):
     # names, scores = task.retrieve_mols(model, args.mol_path, args.pocket_path, args.emb_dir, 10000)
 
     # task.encode_mols_multi_folds(model, "/drug/DrugCLIP_chemdata_v2024/DrugCLIP_mols_v2024.lmdb", "/drug/tmp_save/")
-    task.encode_mols_multi_folds(model, args.mol_path, args.save_dir)
+    task.encode_mols_multi_folds(model, args.mol_path, args.save_dir, args.weight_path, args.airdd_test)
 
 
 def cli_main():
     # add args
 
     parser = options.get_validation_parser()
-    parser.add_argument(
-        "--mol-path",
-        type=str,
-        default="/data/mol.lmdb",
-        help="path for mol data",
-    )
-    parser.add_argument("--save-dir", type=str, default="", help="save dir")
+    parser.add_argument("--save-dir", type=str, default="/data", help="save dir")
+    parser.add_argument("--weight-path", type=str, default="", help="checkpoint weight pathr")
+    parser.add_argument("--airdd-test", type=bool, default=False, help="do airdd test or not")
 
     options.add_model_args(parser)
     args = options.parse_args_and_arch(parser)
+
+    args.mol_path = os.path.join(args.save_dir, 'mol.lmdb')
 
     distributed_utils.call_main(args, main)
 

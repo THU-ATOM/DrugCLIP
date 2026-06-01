@@ -29,22 +29,22 @@ import pickle as pkl
 
 DEFAULT_EMBED_DIM = 128 * 6
 
-def load_pocket_embedding(workdir: str):
+def load_pocket_embedding(workdir: str, airdd_test: bool):
     """Load pocket embeddings from DrugCLIP."""
     path = Path(workdir) / "pocket_reps_project.pkl"
     with open(path, "rb") as f:
         _, pocket_embedding = pkl.load(f)
-    pocket_embedding = pocket_embedding.reshape(-1, DEFAULT_EMBED_DIM)
+    pocket_embedding = pocket_embedding.reshape(-1, DEFAULT_EMBED_DIM if not airdd_test else 128)
     return pocket_embedding
 
 
-def load_mol_embedding(workdir: str):
+def load_mol_embedding(workdir: str, airdd_test: bool):
     """Load molecule embeddings from DrugCLIP."""
     path = Path(workdir) / "mol_embs.npy"
-    mol_embedding = np.load(path).reshape(-1, DEFAULT_EMBED_DIM)
+    mol_embedding = np.load(path).reshape(-1, DEFAULT_EMBED_DIMif if not airdd_test else 128)
     return mol_embedding
 
-def encode_pocket(workdir: str, checkpoint_dir: str, gpu_id: int = 0):
+def encode_pocket(workdir: str, checkpoint_dir: str, gpu_id: int = 0, airdd_test: bool = False):
     """
     调用 encode_pocket.sh 生成 pocket embedding
     """
@@ -57,11 +57,11 @@ def encode_pocket(workdir: str, checkpoint_dir: str, gpu_id: int = 0):
     if not os.path.exists(script_path):
         raise FileNotFoundError(f"{script_path} not found in container!")
     
-    cmd = f"bash {script_path} {workdir}"
+    cmd = f"bash {script_path} {workdir} {checkpoint_dir} {airdd_test}"
     subprocess.run(cmd, shell=True, check=True, env=env)
 
 
-def encode_mols(workdir: str, checkpoint_dir: str, gpu_id: int = 0):
+def encode_mols(workdir: str, checkpoint_dir: str, gpu_id: int = 0, airdd_test: bool = False):
     """
     调用 encode_mols.sh 生成 ligand embedding
     """
@@ -74,7 +74,7 @@ def encode_mols(workdir: str, checkpoint_dir: str, gpu_id: int = 0):
     if not os.path.exists(script_path):
         raise FileNotFoundError(f"{script_path} not found in container!")
     
-    cmd = f"bash {script_path} {workdir}"
+    cmd = f"bash {script_path} {workdir} {checkpoint_dir} {airdd_test}"
     subprocess.run(cmd, shell=True, check=True, env=env)
 
 class RerankMethod(ABC):
@@ -302,15 +302,14 @@ def ligand2dict(ligand_name, ligand_sdf, pocket_name, keep_original_conf=False):
 class DrugCLIPReranker(RerankMethod):
     POCKET_SIZE = 6
 
-    def __init__(self, checkpoint_dir: str, gpu_id: int = 0):
+    def __init__(self, checkpoint_dir: str, gpu_id: int = 0, airdd_test: bool = False):
         self.checkpoint_dir = checkpoint_dir
         self.gpu_id = gpu_id
+        self.airdd_test = airdd_test
 
     @property
     def name(self):
         return "DrugCLIP"
-
-    
 
     def process(self, raw_data, workdir):
         """
@@ -358,11 +357,11 @@ class DrugCLIPReranker(RerankMethod):
             print(f"pocket_pdb: {pocket_pdb}")
 
 
-            pattern = re.compile(r".*/drugclip")
+            pattern = re.compile(r".*drugclip/drugclip_[^/]+")
             match = pattern.match(pocket_pdb)
             if match:
-                # 替换前缀为 /data
-                pocket_pdb = pocket_pdb.replace(match.group(), "/data")  
+                # 替换前缀为 /run
+                pocket_pdb = pocket_pdb.replace(match.group(), "/run")  
 
             print(f"docker-corrected pocket_pdb: {pocket_pdb}")
           
@@ -396,12 +395,12 @@ class DrugCLIPReranker(RerankMethod):
         write_lmdb(ligands, self.ligand_lmdb, force_recreate=True)
 
         # 编码 embedding
-        encode_pocket(str(workdir), self.checkpoint_dir, self.gpu_id)
-        encode_mols(str(workdir), self.checkpoint_dir, self.gpu_id)
+        encode_pocket(str(workdir), self.checkpoint_dir, self.gpu_id, self.airdd_test)
+        encode_mols(str(workdir), self.checkpoint_dir, self.gpu_id, self.airdd_test)
 
 
-        pocket_embedding = load_pocket_embedding(workdir)
-        ligand_embedding = load_mol_embedding(workdir)
+        pocket_embedding = load_pocket_embedding(workdir, self.airdd_test)
+        ligand_embedding = load_mol_embedding(workdir, self.airdd_test)
 
         return {
             "pockets": pocket_embedding,
@@ -508,6 +507,7 @@ def main():
     parser.add_argument("--checkpoint", required=True)
     parser.add_argument("--batch-size", type=int, default=8)
     parser.add_argument("--gpu", type=int, default=0)
+    parser.add_argument("--airdd-test", action="store_true")
     args = parser.parse_args()
 
     input_file = Path(args.input)
@@ -518,7 +518,7 @@ def main():
     raw_data = load_input_json(input_file)
 
     # 2) 初始化 DrugCLIP Reranker
-    reranker = DrugCLIPReranker(checkpoint_dir=str(checkpoint), gpu_id=args.gpu)
+    reranker = DrugCLIPReranker(checkpoint_dir=str(checkpoint), gpu_id=args.gpu, airdd_test=args.airdd_test)
 
     # 3) 创建工作目录（与外层 docker 的 /data 映射一致）
     rundir = input_file.parent
