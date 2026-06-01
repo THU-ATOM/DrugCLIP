@@ -41,10 +41,13 @@ def write_lmdb(data, lmdb_path, num):
         meminit=False,
         map_size=1099511627776,
     )
-    with env.begin(write=True) as txn:
-        for d in data:
-            txn.put(str(num).encode("ascii"), pickle.dumps(d))
-            num += 1
+    try:
+        with env.begin(write=True) as txn:
+            for d in data:
+                txn.put(str(num).encode("ascii"), pickle.dumps(d))
+                num += 1
+    finally:
+        env.close()
 
     return num
 
@@ -175,7 +178,8 @@ def main(args):
 
     # read pocket dir
     pocket_reps, pocket_names = task.encode_pockets_multi_folds(
-        model, args.pocket_dir, os.path.join(args.pocket_dir, "pocket.lmdb")
+        model, args.pocket_dir, os.path.join(args.pocket_dir, "pocket.lmdb"), 
+        args.weight_path, args.airdd_test
     )
 
     # print shape
@@ -198,9 +202,9 @@ def cli_main():
     # add args
 
     parser = options.get_validation_parser()
-    parser.add_argument(
-        "--pocket-dir", type=str, default="", help="path for pocket dir"
-    )
+    parser.add_argument("--pocket-dir", type=str, default="", help="path for pocket dir")
+    parser.add_argument("--weight-path", type=str, default="", help="path for checkpoint weight")
+    parser.add_argument("--airdd-test", type=bool, default=False, help="do airdd test or not")
 
     options.add_model_args(parser)
     args = options.parse_args_and_arch(parser)

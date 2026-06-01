@@ -1,7 +1,9 @@
 results_path="./test"  # replace to your results path
 batch_size=8
-mol_path="/data/workdir/mol.lmdb" # path to the molecule file
-save_path=$1 # path to the save dir
+workdir=$1 # path to the save dir
+checkpoint_dir=$2
+weight_path="${checkpoint_dir}/checkpoint_best.pt"
+airdd_test=$3
 
 
 python3 /workspace/unimol/encode_mols.py --user-dir ./unimol $data_path "./data" --valid-subset test \
@@ -11,5 +13,6 @@ python3 /workspace/unimol/encode_mols.py --user-dir ./unimol $data_path "./data"
        --max-pocket-atoms 256 \
        --seed 1 \
        --log-interval 100 --log-format simple \
-       --mol-path $mol_path \
-       --save-dir $save_path
+       --save-dir $workdir \
+       --weight-path $weight_path \
+       --airdd-test $airdd_test
