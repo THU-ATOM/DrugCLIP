@@ -274,7 +274,7 @@ def read_sdf_gz(path):
     inf = gzip.open(path)
     with Chem.ForwardSDMolSupplier(inf, removeHs=False, sanitize=False) as gzsuppl:
         ms = [add_charges(x) for x in gzsuppl if x is not None]
-    ms = [rdMolStandardize.Uncharger().uncharge(Chem.RemoveHs(m)) for m in ms if m is not None]
+    ms = [rdMolStandardize.Uncharger().uncharge(Chem.RemoveHs(m, sanitize=False)) for m in ms if m is not None]
     print(f"    从 SDF.GZ 读取了 {len(ms)} 个分子", flush=True)
     return ms
 

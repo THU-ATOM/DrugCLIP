@@ -77,7 +77,7 @@ def read_sdf_gz_3d(path):
     inf = gzip.open(path)
     with Chem.ForwardSDMolSupplier(inf, removeHs=False, sanitize=False) as gzsuppl:
         ms = [add_charges(x) for x in gzsuppl if x is not None]
-    ms = [rdMolStandardize.Uncharger().uncharge(Chem.RemoveHs(m)) for m in ms if m is not None]
+    ms = [rdMolStandardize.Uncharger().uncharge(Chem.RemoveHs(m, sanitize=False)) for m in ms if m is not None]
     return ms
 
 def add_charges(m):
