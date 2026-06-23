@@ -36,7 +36,7 @@ def parse_args():
     parser.add_argument('--results-path', type=str, default='./test', help='test.sh 的结果输出路径')
     # 移除 test-task 参数,现在使用通用推理
     # parser.add_argument('--test-task', type=str, default='DUDE', choices=['PCBA', 'DUDE'], help='test.sh 的测试任务')
-    parser.add_argument('--gpu-id', type=str, default='1', help='test.sh 使用的 GPU ID')
+    parser.add_argument('--gpu-id', type=str, default='0', help='test.sh 使用的 GPU ID')
     
     return parser.parse_args()
 
@@ -521,7 +521,7 @@ def main():
             env['INPUT_JSON'] = str(args.input)  # Pass input.json path to test.sh
             # 移除 TASK 环境变量,现在使用通用推理
             # env['TASK'] = str(args.test_task)
-            env['CUDA_VISIBLE_DEVICES'] = str(args.gpu_id)
+            env['CUDA_VISIBLE_DEVICES'] = os.environ.get('CUDA_VISIBLE_DEVICES', str(args.gpu_id))
             env['PYTHONUNBUFFERED'] = '1'  # 禁用 Python 缓冲
             
             print("="*80, flush=True)

@@ -49,7 +49,7 @@ def encode_pocket(workdir: str, checkpoint_dir: str, gpu_id: int = 0, airdd_test
     调用 encode_pocket.sh 生成 pocket embedding
     """
     env = os.environ.copy()
-    env["CUDA_VISIBLE_DEVICES"] = str(gpu_id)
+    env["CUDA_VISIBLE_DEVICES"] = os.environ.get("CUDA_VISIBLE_DEVICES", str(gpu_id))
 
     # 脚本路径固定到 /app
     script_path = "/workspace/encode_pocket.sh"
@@ -66,7 +66,7 @@ def encode_mols(workdir: str, checkpoint_dir: str, gpu_id: int = 0, airdd_test: 
     调用 encode_mols.sh 生成 ligand embedding
     """
     env = os.environ.copy()
-    env["CUDA_VISIBLE_DEVICES"] = str(gpu_id)
+    env["CUDA_VISIBLE_DEVICES"] = os.environ.get("CUDA_VISIBLE_DEVICES", str(gpu_id))
 
     # 脚本路径固定到 /app
     script_path = "/workspace/encode_mols.sh"
